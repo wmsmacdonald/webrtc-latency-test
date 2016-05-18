@@ -1,0 +1,248 @@
+#!/usr/bin/env node
+"use strict";
+
+var R = require('ramda');
+
+/**
+ * Module dependencies.
+ */
+
+var app = require('../app');
+var debug = require('debug')('demo:server');
+var http = require('http');
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+var port = normalizePort(process.env.PORT || '3000');
+// app.set('port', port);
+
+/**
+ * Create HTTP server.
+ */
+
+var server = http.createServer(app.callback());
+
+/**
+ * Listen on provided port, on all network interfaces.
+ */
+
+server.listen(port);
+server.on('error', onError);
+server.on('listening', onListening);
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = server.address();
+  var bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : 'port ' + addr.port;
+  debug('Listening on ' + bind);
+}
+
+// websocket server
+var WebSocketServer = require('ws').Server;
+var wss = new WebSocketServer({port: 3131});
+/*
+client:
+  {
+    id:
+    ws:
+    connectedPeers: []
+    pendingPeers: []
+    availableOffers: []
+  }
+ */
+var clients = [];
+
+wss.on('connection', function(ws) {
+  console.log('new ws connection');
+  let clientId = clients.length;
+  let client = {
+    id: clientId,
+    ws: ws,
+    peerConnections: [],
+    availableOffers: []
+  };
+  clients.push(client);
+  ws.on('message', onMessage.bind(null, client));
+});
+
+function onMessage(client, message) {
+
+  message = safelyParseJSON(message);
+
+  if (message.match) {
+    let peer = matchPeer(clients, client);
+
+    if (peer) {
+      let peerConnection = {
+        peer: peer
+      };
+      sendNextOffer(peer, client, peerConnection);
+    }
+    else {
+      client.ws.send(JSON.stringify({
+        match: false
+      }));
+    }
+  }
+
+  else if (message.offer) {
+    console.log('Adding offer');
+    addOffer(client, message.offer, message.localConnectionId);
+  }
+
+  else if (message.answer) {
+    let peerConnection = client.peerConnections.find(function(peerConnection) {
+      return peerConnection.id === message.peerId;
+    });
+
+    if (peerConnection !== undefined) {
+      peerConnection.peer.ws.send(JSON.stringify({
+        answer: {
+          description: message.answer
+        },
+        localConnectionId: peerConnection.localConnectionId
+      }));
+    }
+  }
+
+  else if (message.relay) {
+    //if (isIn(client.peers, message.relay.recipientId)) {
+    let peerConnection = client.peerConnections.find(function(peerConnection) {
+      return peerConnection.peer.id === message.recipientId;
+    });
+
+    if (peerConnection !== undefined) {
+      clients[message.relay.recipientId].send(JSON.stringify({
+        relay: true,
+        localConnectionId: peerConnection.localConnectionId,
+        data: message.relay.data
+      }));
+    }
+    else {
+      console.log('Not connected to peer' + message.relay.recipientId);
+    }
+  }
+  else {
+    console.log('Unknown message: ' + JSON.stringify(message));
+  }
+}
+
+function matchPeer(clients, client) {
+
+  var peerId = 0;
+
+  while (peerId < clients.length && (
+    // skips possible match if it...
+    // is itself
+    peerId === client.id
+    // is already a peer
+    || client.peerConnections.find(function(peer) {
+        return peer.id === peerId
+    }) !== undefined
+    // has been deleted
+    || clients[peerId] === undefined
+    // already has too many peers
+    || clients[peerId].peerConnections.length > 30 )) {
+
+    peerId++;
+  }
+  console.log('match id: ' + peerId);
+
+  return peerId >= clients.length ? false : clients[peerId];
+}
+
+function safelyParseJSON(string) {
+  try {
+    return JSON.parse(string);
+  }
+  catch (e) {
+    console.log('Invalid JSON: ' + message);
+    return false;
+  }
+}
+
+function sendNextOffer(senderClient, recipientClient, peerConnection) {
+  let offer = senderClient.availableOffers.shift();
+  console.log(offer);
+  console.log(offer.description);
+  peerConnection.localConnectionId = offer.localConnectionId;
+  recipientClient.ws.send(JSON.stringify({
+    offer: {
+      description: offer.description
+    },
+    remoteId: senderClient.id
+  }));
+  requestOffer(senderClient);
+}
+
+function requestOffer(client) {
+  client.ws.send(JSON.stringify({
+    requestOffer: true
+  }));
+}
+
+function addOffer(offerer, offer, localConnectionId) {
+  offerer.availableOffers.push({
+    localConnectionId: localConnectionId,
+    description: offer.description
+  });
+}
+
+function isIn(arr,obj) {
+  return arr.indexOf(obj) != -1;
+}
