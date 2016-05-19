@@ -118,6 +118,7 @@ wss.on('connection', function(ws) {
   };
   clients.push(client);
   ws.on('message', onMessage.bind(null, client));
+  ws.on('close', onClose.bind(null, client));
 });
 
 function onMessage(client, message) {
@@ -128,15 +129,16 @@ function onMessage(client, message) {
     let peer = matchPeer(clients, client);
 
     if (peer) {
-      let peerConnection = {
+      client.peerConnections.push({
         peer: peer
-      };
-      sendNextOffer(peer, client, peerConnection);
+      });
+      peer.peerConnections.push({
+        peer: client
+      });
+      sendNextOffer(peer, client);
     }
     else {
-      client.ws.send(JSON.stringify({
-        match: false
-      }));
+      console.log('no peer available');
     }
   }
 
@@ -146,45 +148,44 @@ function onMessage(client, message) {
   }
 
   else if (message.answer) {
-    let peerConnection = client.peerConnections.find(function(peerConnection) {
-      return peerConnection.id === message.peerId;
+    console.log('received answer');
+
+    let answererPeerConnection = client.peerConnections.find(function(peerConnection) {
+      return peerConnection.peer.id === message.targetId;
     });
 
-    if (peerConnection !== undefined) {
-      peerConnection.peer.ws.send(JSON.stringify({
+    let offerer = answererPeerConnection.peer;
+
+    let offererPeerConnection = offerer.peerConnections.find(function(peerConnection) {
+      return peerConnection.peer.id === client.id;
+    });
+
+    answererPeerConnection.localConnectionId = message.localConnectionId;
+
+    if (answererPeerConnection !== undefined) {
+      let messageToOfferer = {
         answer: {
-          description: message.answer
+          description: message.answer.description
         },
-        localConnectionId: peerConnection.localConnectionId
-      }));
+        localConnectionId: offererPeerConnection.localConnectionId
+      };
+      answererPeerConnection.peer.ws.send(JSON.stringify(messageToOfferer));
     }
   }
 
-  else if (message.relay) {
-    //if (isIn(client.peers, message.relay.recipientId)) {
-    let peerConnection = client.peerConnections.find(function(peerConnection) {
-      return peerConnection.peer.id === message.recipientId;
-    });
-
-    if (peerConnection !== undefined) {
-      clients[message.relay.recipientId].send(JSON.stringify({
-        relay: true,
-        localConnectionId: peerConnection.localConnectionId,
-        data: message.relay.data
-      }));
-    }
-    else {
-      console.log('Not connected to peer' + message.relay.recipientId);
-    }
-  }
   else {
     console.log('Unknown message: ' + JSON.stringify(message));
   }
 }
 
+function onClose(client) {
+  clients[client.id] = undefined;
+  console.log('closed');
+}
+
 function matchPeer(clients, client) {
 
-  var peerId = 0;
+  let peerId = 0;
 
   while (peerId < clients.length && (
     // skips possible match if it...
@@ -201,7 +202,6 @@ function matchPeer(clients, client) {
 
     peerId++;
   }
-  console.log('match id: ' + peerId);
 
   return peerId >= clients.length ? false : clients[peerId];
 }
@@ -216,10 +216,12 @@ function safelyParseJSON(string) {
   }
 }
 
-function sendNextOffer(senderClient, recipientClient, peerConnection) {
+function sendNextOffer(senderClient, recipientClient) {
   let offer = senderClient.availableOffers.shift();
-  console.log(offer);
-  console.log(offer.description);
+  let peerConnection = senderClient.peerConnections.find(function(peerConnection) {
+    return peerConnection.peer.id === recipientClient.id;
+  });
+
   peerConnection.localConnectionId = offer.localConnectionId;
   recipientClient.ws.send(JSON.stringify({
     offer: {
@@ -241,8 +243,4 @@ function addOffer(offerer, offer, localConnectionId) {
     localConnectionId: localConnectionId,
     description: offer.description
   });
-}
-
-function isIn(arr,obj) {
-  return arr.indexOf(obj) != -1;
 }
