@@ -1,5 +1,29 @@
 "use strict";
 var peerConnections;
+
+var log = {
+  debug: function(obj) {
+    this.debugLogs.push(obj);
+  },
+  debugLogs: [],
+  warning: function(obj) {
+    console.log(obj);
+  },
+  error: function(error) {
+    throw error;
+  }
+};
+
+function testLatency() {
+  let channel = peerConnections[0].channel;
+  let start = new Date();
+  channel.onmessage = function(event) {
+    log.warning(new Date() - start);
+  };
+  channel.send('test');
+
+}
+
 (function() {
   const WS_HOST = 'ws://127.0.0.1:3131';
   let signalingServer = new WebSocket(WS_HOST);
@@ -21,14 +45,26 @@ var peerConnections;
   });
 
   function createOfferConnection(signalingServerConnectPromise, id) {
-    console.log('creating offer connection');
+    log.debug('creating offer connection');
     let peerConnection = new RTCPeerConnection({'iceServers': [{'url': 'stun:stun.services.mozilla.com'}, {'url': 'stun:stun.l.google.com:19302'}]});
-    var channel = peerConnection.createDataChannel('test');
+    var channel = peerConnection.createDataChannel('datachannel');
+
+
+    /*channel.onmessage = function(message) {
+      log.warning(new Date() - start);
+    };
+
+    channel.onopen = function() {
+      start = new Date();
+      channel.send('afsdfs');
+    };*/
+
+
     let offerPromise = peerConnection.createOffer();
 
     Promise.all([offerPromise, signalingServerConnectPromise])
       .then(function (values) {
-        console.log('got local description');
+        log.debug('got local description');
         wsSendObject(values[1], {
           offer: {
             description: values[0]
@@ -37,7 +73,7 @@ var peerConnections;
         });
         peerConnection.onicecandidate = function(event) {
           if (event.candidate) {
-            console.log('got local candidate');
+            log.debug('got local candidate');
             wsSendObject(values[1], {
               candidate: event.candidate,
               localPeerConnectionId: id
@@ -51,12 +87,7 @@ var peerConnections;
         return peerConnection.setLocalDescription(description);
       })
       .then(function() {
-        console.log('offer local description set');
-      });
-
-    signalingServerConnectPromise
-      .then(function(signalingServer) {
-
+        log.debug('offer local description set');
       });
 
     return {
@@ -73,7 +104,7 @@ var peerConnections;
 
   function serverMessageController(event) {
     let message = safelyParseJSON(event.data);
-    console.log(message);
+    log.debug(message);
 
     if (message.offer && message.offer.description) {
       // connection and answer need to be created;
@@ -81,12 +112,12 @@ var peerConnections;
       peerConnections.push(answerConnection);
       while (message.offer.candidates.length > 0) {
         answerConnection.peerConnection.addIceCandidate(message.offer.candidates.shift());
-        console.log('added remote candidate');
+        log.debug('added remote candidate');
       }
     }
 
     else if (message.peerConnection && message.message.answer) {
-      console.log('got remote answer');
+      log.debug('got remote answer');
       let peerConnection = peerConnections.find(function(peerConnection) {
         return peerConnection.id === message.localPeerConnectionId;
       });
@@ -99,16 +130,19 @@ var peerConnections;
       });
 
       peerConnection.peerConnection.addIceCandidate(message.message.candidate);
-      console.log('added remote candidate');
+      log.debug('added remote candidate');
+    }
+    else if (message.requestOffer) {
+
     }
     else {
-      console.log('unrecognized message: ' + JSON.stringify(message));
+      log.error('unrecognized message: ' + JSON.stringify(message));
     }
 
   }
 
   function createAnswerConnection(remoteDescription, remoteId, id) {
-    console.log('creating ');
+    log.debug('creating ');
     let peerConnection = new RTCPeerConnection({'iceServers': [{'url': 'stun:stun.services.mozilla.com'}, {'url': 'stun:stun.l.google.com:19302'}]});
     let answerPromise = peerConnection.setRemoteDescription(remoteDescription)
       .then(function() {
@@ -120,12 +154,12 @@ var peerConnections;
         return peerConnection.setLocalDescription(description);
       })
       .then(function() {
-        console.log('set answer local description');
+        log.debug('set answer local description');
       });
 
     Promise.all([answerPromise, signalingServerConnectPromise])
       .then(function(values) {
-        console.log('answer created');
+        log.debug('answer created');
         wsSendObject(values[1],{
           answer: {
             description: values[0]
@@ -137,7 +171,7 @@ var peerConnections;
 
     peerConnection.onicecandidate = function(event) {
       if (event.candidate) {
-        console.log('got local candidate');
+        log.debug('got local candidate');
         wsSendObject(signalingServer, {
          candidate: event.candidate,
          localPeerConnectionId: id,
@@ -146,10 +180,22 @@ var peerConnections;
       }
     };
 
-    return {
+    let peerInfo = {
       id: id,
       peerConnection: peerConnection
     };
+
+    peerConnection.ondatachannel = function(event) {
+      log.debug('got data channel');
+      peerInfo.channel = event.channel;
+
+      event.channel.onmessage = function(message) {
+        log.warning(message.data);
+        event.channel.send(message.data);
+      };
+    };
+
+    return peerInfo;
   }
 
   function safelyParseJSON(string) {
@@ -157,7 +203,7 @@ var peerConnections;
       return JSON.parse(string);
     }
     catch (e) {
-      throw 'Invalid JSON: ' + string;
+      log.error('Invalid JSON: ' + string);
     }
   }
 
@@ -174,8 +220,3 @@ var peerConnections;
   }
 
 })();
-
-
-
-
-
