@@ -66,7 +66,7 @@ function testLatency() {
 
     Promise.all([offerPromise, signalingServerConnectPromise])
       .then(function (values) {
-        log.debug('got local description');
+
         wsSendObject(values[1], {
           offer: {
             description: values[0]
@@ -75,7 +75,7 @@ function testLatency() {
         });
         peerConnection.onicecandidate = function(event) {
           if (event.candidate !== null) {
-            log.debug('got local candidate ' + numCandidates++);
+            log.debug('got local candidate ' + numCandidates++ + ' (offer)');
             wsSendObject(values[1], {
               candidate: event.candidate,
               localPeerConnectionId: id
@@ -86,10 +86,11 @@ function testLatency() {
 
     offerPromise
       .then(function(description) {
+        log.debug('got local description (offer)');
         return peerConnection.setLocalDescription(description);
       })
       .then(function() {
-        log.debug('offer local description set');
+        log.debug('local description set (offer)');
       });
 
     return {
@@ -116,7 +117,7 @@ function testLatency() {
       peerConnections.push(answerConnection);
       while (message.offer.candidates.length > 0) {
         answerConnection.peerConnection.addIceCandidate(message.offer.candidates.shift());
-        log.debug('added remote candidate');
+        log.debug('added remote candidate ' + numRemoteCandidates++);
       }
     }
 
@@ -146,7 +147,7 @@ function testLatency() {
   }
 
   function createAnswerConnection(remoteDescription, remoteId, id) {
-    log.debug('creating ');
+    log.debug('creating answer connection');
     let peerConnection = new RTCPeerConnection({'iceServers': [{'url': 'stun:stun.services.mozilla.com'}, {'url': 'stun:stun.l.google.com:19302'}]});
     let answerPromise = peerConnection.setRemoteDescription(remoteDescription)
       .then(function() {
@@ -173,9 +174,11 @@ function testLatency() {
         });
       });
 
+    var numCandidates = 1;
+
     peerConnection.onicecandidate = function(event) {
       if (event.candidate) {
-        log.debug('got local candidate');
+        log.debug('got local candidate ' + numCandidates++ + ' (answer)');
         wsSendObject(signalingServer, {
          candidate: event.candidate,
          localPeerConnectionId: id,
@@ -209,10 +212,6 @@ function testLatency() {
     catch (e) {
       log.error('Invalid JSON: ' + string);
     }
-  }
-
-  function error(error) {
-    console.log(error);
   }
 
   function range(length, valueFunction) {
