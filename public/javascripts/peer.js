@@ -40,7 +40,7 @@ function testLatency() {
     });
 
   let peerConnectionIdSeq = 0;
-  peerConnections = range(5, function() {
+  peerConnections = range(1, function() {
     return createOfferConnection(signalingServerConnectPromise, peerConnectionIdSeq++);
   });
 
@@ -62,6 +62,8 @@ function testLatency() {
 
     let offerPromise = peerConnection.createOffer();
 
+    let numCandidates = 1;
+
     Promise.all([offerPromise, signalingServerConnectPromise])
       .then(function (values) {
         log.debug('got local description');
@@ -72,8 +74,8 @@ function testLatency() {
           localPeerConnectionId: id
         });
         peerConnection.onicecandidate = function(event) {
-          if (event.candidate) {
-            log.debug('got local candidate');
+          if (event.candidate !== null) {
+            log.debug('got local candidate ' + numCandidates++);
             wsSendObject(values[1], {
               candidate: event.candidate,
               localPeerConnectionId: id
@@ -101,6 +103,8 @@ function testLatency() {
     .then(function(signalingServer) {
       signalingServer.onmessage = serverMessageController;
     });
+
+  let numRemoteCandidates = 1;
 
   function serverMessageController(event) {
     let message = safelyParseJSON(event.data);
@@ -130,7 +134,7 @@ function testLatency() {
       });
 
       peerConnection.peerConnection.addIceCandidate(message.message.candidate);
-      log.debug('added remote candidate');
+      log.debug('added remote candidate ' + numRemoteCandidates++);
     }
     else if (message.requestOffer) {
 
