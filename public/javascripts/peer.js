@@ -25,7 +25,6 @@ function testLatency() {
 }
 
 (function() {
-  const WS_HOST = 'ws://127.0.0.1:3131';
   let signalingServer = new WebSocket(WS_HOST);
 
   let signalingServerConnectPromise = new Promise(function(resolve, reject) {
@@ -48,6 +47,13 @@ function testLatency() {
     log.debug('creating offer connection');
     let peerConnection = new RTCPeerConnection({'iceServers': [{'url': 'stun:stun.services.mozilla.com'}, {'url': 'stun:stun.l.google.com:19302'}]});
     var channel = peerConnection.createDataChannel('datachannel');
+
+    new Promise(function(resolve, reject) {
+      channel.onopen = resolve;
+    })
+    .then(() => {
+      log.debug('channel open');
+    });
 
 
     /*channel.onmessage = function(message) {
