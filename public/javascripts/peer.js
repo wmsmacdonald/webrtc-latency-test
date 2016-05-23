@@ -123,7 +123,7 @@ function testLatency() {
       peerConnections.push(answerConnection);
       while (message.offer.candidates.length > 0) {
         answerConnection.peerConnection.addIceCandidate(message.offer.candidates.shift());
-        log.debug('added remote candidate ' + numRemoteCandidates++);
+        log.debug('added remote candidate ' + numRemoteCandidates++ + ' (answerer)');
       }
     }
 
