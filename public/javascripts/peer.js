@@ -49,11 +49,11 @@ function testLatency() {
     var channel = peerConnection.createDataChannel('datachannel');
 
     new Promise(function(resolve, reject) {
-      channel.onopen = resolve;
-    })
-    .then(() => {
-      log.debug('channel open');
-    });
+        channel.onopen = resolve;
+      })
+      .then(() => {
+        log.debug('channel open');
+      });
 
 
     /*channel.onmessage = function(message) {

@@ -1,8 +1,6 @@
 #!/usr/bin/env node
 "use strict";
 
-var R = require('ramda');
-
 /**
  * Module dependencies.
  */
@@ -112,33 +110,97 @@ wss.on('connection', function(ws) {
   let clientId = clients.length;
   let client = {
     id: clientId,
+    messageNum: 0,
     ws: ws,
-    peerConnections: [],
-    availableOffers: []
+    relayLanes: {}
   };
   clients.push(client);
-  ws.on('message', onMessage.bind(null, client));
+  ws.on('message', matchClient.bind(null, client));
   ws.on('close', onClose.bind(null, client));
 });
+
+function matchClient(caller, message) {
+  if (message.matchMe) {
+    let answerer = matchPeer(clients, caller);
+
+    if (answerer) {
+      caller.relayLanes[answerer.id] = {
+        peer: answerer
+      };
+      answerer.relayLanes[caller.id] = {
+        peer: caller
+      };
+
+      let answererCallbackNum = answerer.messageNum++;
+      wsSendObject(answerer.ws, {
+        relayLaneRequest: {
+          peerId: caller.id
+        },
+        callbackNum: answererCallbackNum
+      });
+
+      new Promise((resolve, reject) => {
+        answerer.ws.on('message', function(message) {
+          if (message.num === answererCallbackNum) {
+            resolve();
+          }
+        });
+      })
+        .then(() => {
+          wsSendObject(caller.ws, {
+            relayLaneReady: true,
+            peerId: answerer.id
+          });
+        });
+
+    }
+    else {
+      console.log('no peer available');
+    }
+
+
+  }
+}
+
+
 
 function onMessage(client, message) {
 
   message = safelyParseJSON(message);
 
-  if (message.match) {
+  if (message.match && message.relayLaneId) {
     let peer = matchPeer(clients, client);
 
     if (peer) {
-      client.peerConnections.push({
+      client.relayLanes[peer.id] = {
+        peer: peer,
+        relayLaneId: message.relayLaneId
+      };
+      peer.relayLanes[client.id] = {
         peer: peer
+      };
+
+      wsSendObject(client.ws, {
+        relayLaneRequest: {
+          peerId: peer.id
+        }
       });
-      peer.peerConnections.push({
-        peer: client
-      });
-      sendNextOffer(peer, client);
     }
     else {
       console.log('no peer available');
+    }
+  }
+
+  else if (message.relayLaneResponse
+    && message.relayLaneResponse
+    && message.relayLaneResponse.targetId) {
+    if (client.relayLanes.hasOwnProperty(message.targetId)) {
+      let peer = client.relayLanes[message.targetId].peer
+      wsSendObject(peer.ws, {
+        relayLaneReady: {
+
+        }
+      });
     }
   }
 
@@ -197,13 +259,9 @@ function matchPeer(clients, client) {
     // is itself
     peerId === client.id
     // is already a peer
-    || client.peerConnections.find(function(peer) {
-        return peer.id === peerId
-    }) !== undefined
+    || client.relayLanes.hasOwnProperty(peerId.toString())
     // has been deleted
-    || clients[peerId] === undefined
-    // already has too many peers
-    || clients[peerId].peerConnections.length > 30)) {
+    || clients[peerId] === undefined)) {
 
     peerId++;
   }
@@ -245,33 +303,23 @@ function requestOffer(client) {
 function addOffer(offerer, offer, localPeerConnectionId) {
   offerer.availableOffers.push({
     localPeerConnectionId: localPeerConnectionId,
-    description: offer.description,
-    candidates: [],
-    candidatesDone: false
+    description: offer.description
   });
 }
 
-function addCandidate(client, candidate, localPeerConnectionId, targetId) {
-  // peer connection is pending
-  let pendingOffer = client.availableOffers.find(function(offer) {
-      return offer.localPeerConnectionId === localPeerConnectionId;
-    });
-
-  if (pendingOffer !== undefined) {
-    pendingOffer.candidates.push(candidate);
-  }
-  else {
-    // peer connection is ready
-    let senderConnection = client.peerConnections.find(testPeerConnectionId.bind(null, targetId));
-
-    let recipient = senderConnection.peer;
-
-    let recipientConnection = recipient.peerConnections.find(testPeerConnectionId.bind(null, client.id));
-
-    sendToPeerConnection(recipient, {
+function addCandidate(candidate, relayLane) {
+    relay(relayLane, {
       candidate: candidate
-    }, recipientConnection.localPeerConnectionId);
-  }
+    });
+}
+
+function relay(relayLane, messageObj) {
+  wsSendObject(relayLane.peer.ws, {
+    message: {
+      messageObj
+    },
+    relayLaneId: relayLane.remoteRelayLaneId
+  });
 }
 
 function testPeerConnectionId(id, peerConnection) {
@@ -288,6 +336,17 @@ function safelyParseJSON(string) {
   }
 }
 
+/**
+ *
+ * @param ws            ws object or array of ws objects
+ * @param obj
+ * @param errorCallback
+ */
 function wsSendObject(ws, obj, errorCallback) {
-  ws.send(JSON.stringify(obj), errorCallback);
+  ws = Object.prototype.toString.call(ws) === '[Object object]' ? [ws] : ws;
+
+  ws.forEach((socket) => {
+    socket.send(JSON.stringify(obj), errorCallback);
+  });
+
 }
